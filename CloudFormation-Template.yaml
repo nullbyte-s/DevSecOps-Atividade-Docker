@@ -1,0 +1,840 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template CloudFormation para criar infraestrutura AWS com VPC, EC2, RDS, EFS e Load Balancer em duas zonas de disponibilidade, com politicas de seguranca restritivas.
+
+# Parâmetros que podem ser informados na criação da stack
+Parameters:
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true # Esconde a senha no console
+    Description: Senha do administrador do RDS
+    Default: "HYe^f&ANT-Ed#zn7Ckvl-T" # Senha de exemplo
+
+# Mapeamentos para organizar tags e nomes de recursos
+Mappings:
+  CommonTags:
+    Base: # Tags comuns a todos os recursos
+      Name: "PB - JUN 2024"
+      CostCenter: "C092000024"
+      Project: "PB - JUN 2024"
+    SpecificNames: # Nomes específicos para cada recurso, facilitando a identificação
+      VPC: "Atividade-Docker_VPC"
+      IGW: "Atividade-Docker_IGW"
+      NAT: "Atividade-Docker_NAT"
+      PrivateSubnetA: "Atividade-Docker_Subnet-A"
+      PrivateSubnetB: "Atividade-Docker_Subnet-B"
+      PublicSubnetA: "Atividade-Docker_PublicSubnetA"
+      PublicSubnetB: "Atividade-Docker_PublicSubnetB"
+      RouteTable: "Atividade-Docker_RouteTable"
+      LoadBalancer: "Atividade-Docker_LB"
+      RDSInstance: "Atividade-Docker_RDSInstance"
+      FileSystem: "Atividade-Docker_NFS"
+      FileSystemSG: "Atividade-Docker_NFS-SG"
+
+# Definição dos recursos da infraestrutura
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16 # Define o range de IPs da VPC
+      EnableDnsSupport: true # Habilita suporte a DNS
+      EnableDnsHostnames: true # Habilita nomes de host DNS
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, VPC] # Busca o nome específico no mapeamento
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name] # Busca o nome base no mapeamento
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Cria um Internet Gateway para conectar a VPC à internet
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, IGW]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Conecta o Internet Gateway à VPC
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Subnet pública na zona de disponibilidade us-east-1a
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC # Referência à VPC
+      CidrBlock: 10.0.1.0/24 # Range de IPs da subnet
+      MapPublicIpOnLaunch: true # Atribui IP público automaticamente às instâncias lançadas nesta subnet
+      AvailabilityZone: "us-east-1a" # Zona de disponibilidade
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, PublicSubnetA]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Subnet pública na zona de disponibilidade us-east-1b
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: "us-east-1b"
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, PublicSubnetB]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Tabela de rotas para as subnets públicas
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  # Rota na tabela de rotas públicas para direcionar o tráfego para a internet
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+
+  # Associa a tabela de rotas pública à subnet pública A
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  # Associa a tabela de rotas pública à subnet pública B
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # Subnet privada na zona de disponibilidade us-east-1a
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: "us-east-1a"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, PrivateSubnetA]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Subnet privada na zona de disponibilidade us-east-1b
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: "us-east-1b"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, PrivateSubnetB]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Elastic IP (EIP) para o NAT Gateway
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Cria um NAT Gateway para permitir que instâncias privadas acessem a internet
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref PublicSubnetA # O NAT Gateway precisa estar em uma subnet pública
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId # Associa o EIP ao NAT Gateway
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, NAT]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Tabela de rotas para as subnets privadas
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  # Rota na tabela de rotas privadas para direcionar o tráfego para o NAT Gateway
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  # Associa a tabela de rotas privada à subnet privada A
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Associa a tabela de rotas privada à subnet privada B
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Cria um sistema de arquivos EFS (Elastic File System)
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      Encrypted: true
+
+  # Ponto de montagem para o EFS na subnet privada A
+  EFSMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # Ponto de montagem para o EFS na subnet privada B
+  EFSMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PrivateSubnetB
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # Grupo de subnets de banco de dados para o RDS
+  RDSDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Grupo de sub-rede para a instancia RDS
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Cria uma instância RDS para MySQL
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: wordpress
+      AllocatedStorage: '20'
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: '8.0.35'
+      MasterUsername: root
+      MasterUserPassword: !Ref RDSMasterPassword
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref RDSDBSubnetGroup
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, RDSInstance]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Grupo de segurança para as instâncias EC2
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Grupo de seguranca para instancias EC2"
+      VpcId: !Ref VPC
+      SecurityGroupIngress: # Regras de entrada
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup # Tráfego da porta 80 vindo do Load Balancer
+        - IpProtocol: tcp
+          FromPort: 2049 # NFS
+          ToPort: 2049
+          CidrIp: 10.0.1.0/24 # Tráfego da porta 2049 vindo da subnet pública A
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 10.0.2.0/24 # Tráfego da porta 2049 vindo da subnet privada A
+        - IpProtocol: tcp
+          FromPort: 3306 # MySQL
+          ToPort: 3306
+          CidrIp: 10.0.1.0/24 # Tráfego da porta 3306 vindo da subnet pública A
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.2.0/24 # Tráfego da porta 3306 vindo da subnet privada A
+        # - IpProtocol: tcp # SSH - Descomentar para habilitar acesso SSH
+        #   FromPort: 22
+        #   ToPort: 22
+        #   CidrIp: 0.0.0.0/0 # Permite tráfego SSH de qualquer lugar (NÃO RECOMENDADO PARA PRODUÇÃO - RESTRINGIR APÓS TESTES)
+      SecurityGroupEgress: # Regras de saída
+        - IpProtocol: '-1' # Qualquer protocolo
+          CidrIp: 0.0.0.0/0 # Qualquer destino
+      Tags:
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+
+  # Grupo de segurança para o EFS
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Grupo de seguranca para o EFS"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 10.0.0.0/16 # Permite tráfego NFS de dentro da VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, FileSystemSG]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+# Grupo de segurança para o RDS
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Grupo de seguranca para a base de dados do RDS MySQL"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Par de chaves para acesso SSH às instâncias EC2
+  NewKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: Atividade-Docker_KeyPair
+      Tags:
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  # Define a configuração de lançamento para o Auto Scaling Group
+  AutoScalingLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: # Garante que os pontos de montagem do EFS estejam criados antes do lançamento das instâncias
+      - EFSMountTargetA
+      - EFSMountTargetB
+    Properties:
+      ImageId: ami-0a887e401f7654935
+      InstanceType: t3.small
+      KeyName: !Ref NewKeyPair
+      SecurityGroups:
+        - !Ref EC2SecurityGroup
+      UserData: # Script que será executado ao iniciar a instância
+        Fn::Base64: !Sub | # Codifica o script em Base64
+          #!/bin/bash
+
+          ## Debugging (descomentar para debug)
+          # exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+          yum update -y # Atualiza os pacotes do sistema
+          yum install -y amazon-efs-utils nfs-utils nc docker # EFS, NFS, Netcat e Docker
+          systemctl start docker
+          systemctl enable docker
+          usermod -a -G docker ec2-user
+
+          mkdir -p /var/www/html/wp-content
+          mount -t efs -o tls ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /var/www/html/wp-content
+          mkdir -p /tmp/docker-wp
+          cd /tmp/docker-wp
+
+          until nc -zv ${RDSInstance.Endpoint.Address} 3306; do # Aguarda o RDS ficar disponível
+            echo "Aguardando o banco de dados RDS..."
+            sleep 10
+          done
+
+          cat <<'EOF' > Dockerfile
+          FROM wordpress:latest
+          ENV WORDPRESS_DB_HOST=${RDSInstance.Endpoint.Address}
+          ENV WORDPRESS_DB_USER=root
+          ENV WORDPRESS_DB_PASSWORD=${RDSMasterPassword}
+          ENV WORDPRESS_DB_NAME=wordpress
+          EXPOSE 80
+          EOF
+          docker build -t wordpress-custom . # Constrói a imagem Docker
+          docker run --name wordpress -p 80:80 -d \ # Executa o container Docker
+              -v /var/www/html/wp-content:/var/www/html/wp-content \ # Mapeia o volume do EFS para o container
+              wordpress-custom
+      AssociatePublicIpAddress: false # Não associa um IP público à instância (está numa subnet privada)
+      IamInstanceProfile: !Ref EC2InstanceProfile # Perfil IAM para a instância
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchConfigurationName: !Ref AutoScalingLaunchConfiguration
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      MinSize: '2'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+        - !Ref WebAppTargetGroup
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: SpecificName
+          Value: "AutoScalingInstance"
+          PropagateAtLaunch: true
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+          PropagateAtLaunch: true
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+          PropagateAtLaunch: true
+
+  # Target Group para o Load Balancer
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: Atividade-Docker-LB
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Scheme: internet-facing # Esquema do Load Balancer voltado para a internet
+      Tags:
+        - Key: SpecificName
+          Value: !FindInMap [CommonTags, SpecificNames, LoadBalancer]
+        - Key: Name
+          Value: !FindInMap [CommonTags, Base, Name]
+        - Key: CostCenter
+          Value: !FindInMap [CommonTags, Base, CostCenter]
+        - Key: Project
+          Value: !FindInMap [CommonTags, Base, Project]
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup # ARN do Target Group para onde o tráfego será encaminhado
+      LoadBalancerArn: !GetAtt LoadBalancer.LoadBalancerArn # ARN do Load Balancer
+      Port: 80
+      Protocol: HTTP
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Grupo de seguranca para o Load Balancer"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+
+  # Política de escalonamento para o Auto Scaling Group
+  ScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization # Métrica: Utilização média da CPU do Auto Scaling Group
+        TargetValue: 50.0 # Valor alvo da utilização da CPU (50%)
+
+  # Função IAM para as instâncias EC2
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: # Documento de política que define quem pode assumir a função (no caso, o serviço EC2)
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns: # Políticas gerenciadas da AWS que serão anexadas à função
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore # Política para o SSM (Systems Manager)
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess # Política para acesso total ao EC2 (Em produção, usar políticas mais restritivas)
+      Policies: # Políticas personalizadas que serão anexadas à função
+        - PolicyName: EC2MinimalPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:DescribeMountTargets
+                  - elasticfilesystem:DescribeFileSystems
+                Resource: !Join ["", ["arn:aws:elasticfilesystem:", !Ref "AWS::Region", ":", !Ref "AWS::AccountId", ":file-system/", !Ref EFSFileSystem]]
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: "*"
+              ## Test-mode (descomentar para testes)
+              # - Effect: Allow
+              #   Action:
+              #     - ec2-instance-connect:SendSSHPublicKey
+              #     - ec2-instance-connect:OpenSSHSession
+              #   Resource: "*"
+
+  # Perfil de instância para as instâncias EC2
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref EC2InstanceRole
+
+  ## (Em desenvolvimento)
+  ## Implementando função Lambda para interromper e iniciar recursos dentro de um período programado, visando a redução de custos em períodos de inatividade
+  ## ----------------------------------------------------------------
+  InstanceStopFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Runtime: python3.9
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900 # 15 minutos
+      Code:
+        ZipFile: |
+          import boto3
+          import time
+
+          ec2 = boto3.client('ec2')
+          elb = boto3.client('elbv2')
+          rds = boto3.client('rds')
+
+          def lambda_handler(event, context):
+            tag_name = 'PB - JUN 2024'
+
+            # Parar instâncias EC2
+            instances = ec2.describe_instances(Filters=[{'Name': 'tag:Name', 'Values': [tag_name]}])['Reservations']
+            instance_ids = [instance['Instances'][0]['InstanceId'] for instance in instances]
+            if instance_ids:
+              ec2.stop_instances(InstanceIds=instance_ids)
+
+            # Parar Load Balancers
+            load_balancers = elb.describe_load_balancers(Names=[tag_name])['LoadBalancers']
+            for lb in load_balancers:
+              elb.modify_load_balancer_attributes(LoadBalancerArn=lb['LoadBalancerArn'], Attributes=[{'Key': 'load_balancing.cross_zone.enabled', 'Value': 'false'}])
+
+            # Deletar NAT Gateways
+            nat_gateways = ec2.describe_nat_gateways(Filter=[{'Name': 'tag:Name', 'Values': [tag_name]}])['NatGateways']
+            for ngw in nat_gateways:
+              ec2.delete_nat_gateway(NatGatewayId=ngw['NatGatewayId'])
+
+            # Parar instâncias RDS
+            db_instances = rds.describe_db_instances(Filters=[{'Name': 'tag:Name', 'Values': [tag_name]}])['DBInstances']
+            for db in db_instances:
+              rds.stop_db_instance(DBInstanceIdentifier=db['DBInstanceIdentifier'])
+
+            # Desassociar e liberar o EIP do NAT Gateway
+            nat_gateways = ec2.describe_nat_gateways(Filter=[{'Name': 'tag:Name', 'Values': [tag_name]}])['NatGateways']
+            for ngw in nat_gateways:
+                allocation_id = ngw['NatGatewayAddresses'][0]['AllocationId']
+                ec2.disassociate_nat_gateway_address(NatGatewayId=ngw['NatGatewayId'], AllocationId=allocation_id)
+                ec2.release_address(AllocationId=allocation_id)
+
+                # Deletar o NAT Gateway
+                ec2.delete_nat_gateway(NatGatewayId=ngw['NatGatewayId'])
+
+            return 'Recursos parados com sucesso.'
+
+  InstanceStartFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Runtime: python3.9
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import time
+
+          ec2 = boto3.client('ec2')
+          elb = boto3.client('elbv2')
+          rds = boto3.client('rds')
+
+          def lambda_handler(event, context):
+            tag_name = 'PB - JUN 2024'
+            subnet_specific_name = 'Atividade-Docker_PublicSubnetA'
+
+            # Iniciar instâncias EC2
+            instances = ec2.describe_instances(Filters=[{'Name': 'tag:Name', 'Values': [tag_name]}])['Reservations']
+            instance_ids = [instance['Instances'][0]['InstanceId'] for instance in instances]
+            if instance_ids:
+              ec2.start_instances(InstanceIds=instance_ids)
+
+            # Habilitar Load Balancers
+            load_balancers = elb.describe_load_balancers(Names=[tag_name])['LoadBalancers']
+            for lb in load_balancers:
+              elb.modify_load_balancer_attributes(LoadBalancerArn=lb['LoadBalancerArn'], Attributes=[{'Key': 'load_balancing.cross_zone.enabled', 'Value': 'true'}])
+
+            # Iniciar instâncias RDS
+            db_instances = rds.describe_db_instances(Filters=[{'Name': 'tag:Name', 'Values': [tag_name]}])['DBInstances']
+            for db in db_instances:
+              rds.start_db_instance(DBInstanceIdentifier=db['DBInstanceIdentifier'])
+
+            # Alocar novo EIP
+            eip = ec2.allocate_address(Domain='vpc')
+            allocation_id = eip['AllocationId']
+
+            # Encontrar a Subnet correta pelo SpecificName
+            subnets = ec2.describe_subnets(Filters=[
+                {'Name': 'tag:Name', 'Values': [tag_name]},
+                {'Name': 'tag:SpecificName', 'Values': [subnet_specific_name]}
+            ])['Subnets']
+
+            if not subnets:
+                raise Exception(f"Nenhuma subnet encontrada com as tags Name: {tag_name} e SpecificName: {subnet_specific_name}")
+
+            subnet_id = subnets[0]['SubnetId']
+
+            # Criar NAT Gateway
+            nat_gateway = ec2.create_nat_gateway(SubnetId=subnet_id, AllocationId=allocation_id, TagSpecifications=[{'ResourceType': 'natgateway', 'Tags': [{'Key': 'Name', 'Value': tag_name}]}])
+            nat_gateway_id = nat_gateway['NatGateway']['NatGatewayId']
+
+            # Aguardar o NAT Gateway ficar disponível
+            while True:
+              nat_gw_status = ec2.describe_nat_gateways(NatGatewayIds=[nat_gateway_id])['NatGateways'][0]['State']
+              if nat_gw_status == 'available':
+                break
+              elif nat_gw_status == 'failed':
+                raise Exception(f"Falha ao criar o NAT Gateway: {nat_gateway['NatGateway']['FailureMessage']}")
+              time.sleep(10)
+
+            return 'Recursos iniciados com sucesso.'
+
+  InstanceStopSchedule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: InstanceStopSchedule
+      Description: Agenda para desligar as instancias
+      ScheduleExpression: 'cron(0 11 ? * MON-FRI *)'
+      Targets:
+        - Arn: !GetAtt InstanceStopFunction.Arn
+          Id: InstanceStopTarget
+
+  InstanceStartSchedule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: InstanceStartSchedule
+      Description: Agenda para iniciar as instancias
+      ScheduleExpression: 'cron(0 9 ? * MON-FRI *)'
+      Targets:
+        - Arn: !GetAtt InstanceStartFunction.Arn
+          Id: InstanceStartTarget
+
+  InstanceStopPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref InstanceStopFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt InstanceStopSchedule.Arn
+
+  InstanceStartPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref InstanceStartFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt InstanceStartSchedule.Arn
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: ec2-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - ec2:StartInstances
+              - ec2:StopInstances
+              - ec2:DescribeInstances
+              - elbv2:DescribeLoadBalancers
+              - elbv2:ModifyLoadBalancerAttributes
+              - ec2:AllocateAddress
+              - ec2:ReleaseAddress
+              - ec2:AssociateNatGatewayAddress
+              - ec2:DisassociateNatGatewayAddress
+              - ec2:DescribeSubnets
+              - ec2:DescribeNatGateways
+              - ec2:DeleteNatGateway
+              - ec2:CreateNatGateway
+              - rds:DescribeDBInstances
+              - rds:StopDBInstance
+              - rds:StartDBInstance
+            Resource: "*"
+  ## ----------------------------------------------------------------
+
+Outputs:
+  VPCId:
+    Description: ID da VPC criada
+    Value: !Ref VPC
+
+  SubnetIdA:
+    Description: ID da Subnet A criada
+    Value: !Ref PrivateSubnetA
+
+  SubnetIdB:
+    Description: ID da Subnet B criada
+    Value: !Ref PrivateSubnetB
+
+  LoadBalancerDNSName:
+    Description: Nome DNS do Load Balancer
+    Value: !GetAtt LoadBalancer.DNSName
+
+  NATGatewayIP:
+    Description: IP Publico do NAT Gateway
+    Value: !GetAtt NATGatewayEIP.PublicIp
+
+  RDSInstanceEndpoint:
+    Description: Endpoint da instancia RDS
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  EFSFileSystemId:
+    Description: ID do Sistema de Arquivos EFS
+    Value: !Ref EFSFileSystem
+
+  EFSFileSystemDNSName:
+    Description: DNS Name do sistema de arquivos EFS
+    Value: !Sub "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com"
+
+  AutoScalingGroupName:
+    Description: Nome do Grupo de Auto Scaling
+    Value: !Ref AutoScalingGroup
+
+  TargetGroupArn:
+    Description: ARN do Target Group
+    Value: !Ref WebAppTargetGroup
+
+  ScalingPolicyName:
+    Description: Nome da Politica de Escalonamento
+    Value: !Ref ScalingPolicy
+
+  KeyPairName:
+    Description: Nome do Par de Chaves EC2
+    Value: !Ref NewKeyPair
