@@ -426,7 +426,7 @@ Resources:
           mkdir -p /tmp/docker-wp
           cd /tmp/docker-wp
 
-          until nc -zv ${RDSInstance.Endpoint.Address} 3306; do # Aguarda o RDS ficar disponível
+          until nc -zv ${RDSInstance.Endpoint.Address} 3306; do
             echo "Aguardando o banco de dados RDS..."
             sleep 10
           done
@@ -439,9 +439,9 @@ Resources:
           ENV WORDPRESS_DB_NAME=wordpress
           EXPOSE 80
           EOF
-          docker build -t wordpress-custom . # Constrói a imagem Docker
-          docker run --name wordpress -p 80:80 -d \ # Executa o container Docker
-              -v /var/www/html/wp-content:/var/www/html/wp-content \ # Mapeia o volume do EFS para o container
+          docker build -t wordpress-custom .
+          docker run --name wordpress -p 80:80 -d \
+              -v /var/www/html/wp-content:/var/www/html/wp-content \
               wordpress-custom
       AssociatePublicIpAddress: false # Não associa um IP público à instância (está numa subnet privada)
       IamInstanceProfile: !Ref EC2InstanceProfile # Perfil IAM para a instância

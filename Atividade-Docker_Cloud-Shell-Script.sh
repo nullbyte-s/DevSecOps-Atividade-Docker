@@ -82,6 +82,7 @@ sudo chmod +x ./Atividade-Docker_Cloud-Shell-Script.sh
 ./Atividade-Docker_Cloud-Shell-Script.sh
 
 # Debugging / Testing
+df -h
 find / -name "amazon-efs-utils" -executable -print 2>/dev/null
 docker logs -f wordpress
 docker exec -it wordpress bash
