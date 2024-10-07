@@ -82,7 +82,7 @@ Executar a opção 4 no script `Atividade-Docker_Cloud-Shell-Script.sh` deletar�
 
 * As regras de segurança foram configuradas para restringir o acesso aos recursos.
 * A senha do RDS é armazenada como um parâmetro do CloudFormation com a opção `NoEcho` habilitada para segurança.
-* Durante o desenvolvimento do template, foi usado o acesso via SSH. O trecho relevante está comentado no template, bastando remover o comentário das linhas de SSH no grupo de segurança `EC2SecurityGroup`, para fins de testes. Numa segunda etapa, visando as boas práticas para um ambiente de produção, foi utilizado um método mais seguro, o Session Manager, a seguir descrito.
+* Durante o desenvolvimento do template, foi usado o acesso via SSH. O trecho relevante está comentado no template, bastando remover o comentário das linhas de SSH no grupo de segurança `EC2SecurityGroup` e na função IAM `EC2InstanceRole`, para fins de testes. Numa segunda etapa, visando as boas práticas para um ambiente de produção, foi utilizado um método mais seguro, o Session Manager, a seguir descrito.
 
 
 ## Acesso às Instâncias EC2 via Session Manager
