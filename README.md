@@ -100,7 +100,7 @@ O template configura as instâncias EC2 para acesso via AWS Systems Manager Sess
 
 * Verificar os logs do CloudFormation permite identificar erros durante a criação da stack.
 * O comando `docker logs -f wordpress` dentro das instâncias EC2 permite verificar os logs do container WordPress.
-* Outros comandos relavantes usados durante os testes estão comentados ao final do script Bash.
+* Outros comandos relevantes usados durante os testes estão comentados ao final do script Bash.
 
 ---
 
