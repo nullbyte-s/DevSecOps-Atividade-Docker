@@ -501,6 +501,19 @@ Resources:
       SecurityGroups:
         - !Ref LoadBalancerSecurityGroup
       Scheme: internet-facing # Esquema do Load Balancer voltado para a internet
+      IpAddressType: ipv4
+      LoadBalancerAttributes:
+        # Esquema para permitir a preservação dos cookies e cache de login entre as instâncias do ambiente de WordPress escalado
+        - Key: routing.http.desync_mitigation_mode # Modo de mitigação de desync
+          Value: defensive
+        - Key: routing.http2.enabled # HTTP/2
+          Value: false
+        - Key: routing.http.xff_header_processing.mode
+          Value: preserve # Preservar o cabeçalho X-Forwarded-For
+        - Key: routing.http.xff_header_processing.preserve_client_port.enabled
+          Value: true # Preservar a porta do cliente
+        - Key: routing.http.preserve_host_header.enabled
+          Value: true # Preservar o cabeçalho Host
       Tags:
         - Key: SpecificName
           Value: !FindInMap [CommonTags, SpecificNames, LoadBalancer]
@@ -718,7 +731,7 @@ Resources:
     Properties:
       Name: InstanceStopSchedule
       Description: Agenda para desligar as instancias
-      ScheduleExpression: 'cron(0 11 ? * MON-FRI *)'
+      ScheduleExpression: 'cron(0 00 ? * MON-FRI *)'
       Targets:
         - Arn: !GetAtt InstanceStopFunction.Arn
           Id: InstanceStopTarget
